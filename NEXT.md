@@ -115,6 +115,8 @@ python hamer_api.py /path/to/videos --output_dir out --wrist_only \
 
 **動作確認:** 9 frame × 2 クリップを GPU 1, 2 に 1 本ずつ並列割当 → 両ワーカー rc=0、v2 スキーマで正常生成
 
+**再確認（2026-05-12 夜、`RUN_PARALLEL.md` の指示書ベース）:** GPU 2,3 で `episode_000204.mp4` (406f) と `GX010052.MP4` (79f) を並列実行。LPT 分配メッセージ表示、両ワーカー rc=0、v2 スキーマ JSON 正常生成（`frames`/`schema_version`/`detector` 全て揃う）。指示書 L66-68 の動作確認ポイントを全てパス。
+
 ### 動作確認
 
 - v2 スキーマ: 15 フレームのクリップで全フィールドが正しく出ることを確認（`joints_2d[0] == wrist_2d` 一致）
