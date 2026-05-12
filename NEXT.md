@@ -115,7 +115,7 @@ python hamer_api.py /path/to/videos --output_dir out --wrist_only \
 
 **動作確認:** 9 frame × 2 クリップを GPU 1, 2 に 1 本ずつ並列割当 → 両ワーカー rc=0、v2 スキーマで正常生成
 
-**再確認（2026-05-12 夜、`RUN_PARALLEL.md` の指示書ベース）:** GPU 2,3 で `episode_000204.mp4` (406f) と `GX010052.MP4` (79f) を並列実行。LPT 分配メッセージ表示、両ワーカー rc=0、v2 スキーマ JSON 正常生成（`frames`/`schema_version`/`detector` 全て揃う）。指示書 L66-68 の動作確認ポイントを全てパス。
+**再確認（2026-05-12 夜、`docs/runbooks/parallel.md` の指示書ベース）:** GPU 2,3 で `episode_000204.mp4` (406f) と `GX010052.MP4` (79f) を並列実行。LPT 分配メッセージ表示、両ワーカー rc=0、v2 スキーマ JSON 正常生成（`frames`/`schema_version`/`detector` 全て揃う）。指示書 L66-68 の動作確認ポイントを全てパス。
 
 ### 単パス dual-output 化（2026-05-13）
 
@@ -155,7 +155,7 @@ python hamer_api.py /path/to/videos --output_dir out --wrist_only \
 - GPU 3 を最初フォルダ全体（85+86）対象で起動してたので、途中で kill + `--files_from` で 1 本に絞って再起動した。フォルダ自動ループだと早く終わった側を後発が上書きしてしまうので、並列時は `--files_from` 推奨
 - 走行中ログ: `/tmp/hamer_gpu1.log`（GX010086）/ `/tmp/hamer_gpu3.log`（GX010085）
 
-別セッションから走らせる手順は `RUN_VIDEO_NEW.md` に集約。
+別セッションから走らせる手順は `docs/runbooks/video_new.md` に集約。
 
 ### 動作確認
 
