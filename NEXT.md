@@ -88,10 +88,38 @@ git push origin main
 git checkout personal && git merge main   # or rebase
 ```
 
+### マルチGPU 並列 `hamer_parallel` 実装
+
+複数 GPU に動画を振り分けて並列推論する関数 + CLI を追加。
+
+**Python API:**
+```python
+from hamer_api import hamer_parallel
+hamer_parallel('/path/to/videos', gpus=[0,1,2,3],
+               output_dir='out', wrist_only=True, log_dir='logs/')
+```
+
+**CLI:**
+```bash
+python hamer_api.py /path/to/videos --output_dir out --wrist_only \
+    --gpus 0,1,2,3 --log_dir logs/
+```
+
+**実装メモ:**
+- 各 GPU に `subprocess.Popen` + `CUDA_VISIBLE_DEVICES=<idx>` で独立プロセスを起動（torch を import 前に env を切るので GPU 分離が確実）
+- フレーム数を `cv2.VideoCapture` でプローブし、**LPT 貪欲法**（最長動画から大きい順に、その時点で最軽量のバケットに積む）で分配
+- ワーカーは新規 CLI フラグ `--files_from <txt>` で自分の担当ファイル一覧を読む
+- 既存フラグ（`skip_existing`, `wrist_only`, `async_io`, `body_detector`, `rescale_factor`, `extensions`, `recursive`）は全て伝搬
+- `--log_dir` を指定すると `worker_gpu<i>.log` に個別ログ
+- LPT の下限は最長動画 1 本の処理時間（GX010003: 2099 frames ≈ 35 分）。GPU を 6 台以上にしても 35 分未満には下がらない
+
+**動作確認:** 9 frame × 2 クリップを GPU 1, 2 に 1 本ずつ並列割当 → 両ワーカー rc=0、v2 スキーマで正常生成
+
 ### 動作確認
 
 - v2 スキーマ: 15 フレームのクリップで全フィールドが正しく出ることを確認（`joints_2d[0] == wrist_2d` 一致）
 - `Hamer` クラス: GPU 1 で `infer_image(path)` / `infer_image(ndarray, render=True)` / `infer_video(wrist_json)` 全て成功
+- `hamer_parallel`: GPU 1,2 の 2 ワーカー並列で 2 動画処理、両 worker rc=0
 
 ---
 
@@ -202,26 +230,26 @@ rm /tmp/GX010001_regnety.mp4
 
 ## 将来できたらいいこと
 
-### `hamer_api.py` の マルチGPU 並列化
+### マルチGPU 並列化 — **実装完了（2026-05-12 後半）**
 
-現状の `hamer()` は単一 GPU で動画を順に処理する。フォルダ内の全動画を再推論すると result/ 相当（52動画 / 13,619 frames）で約 **3.8 時間**。
+`hamer_parallel()` として実装済み。詳細は上の節を参照。
 
-将来的に複数 GPU を使った並列実行を入れると以下のように短縮可能（見積もり）:
+短縮見積もり（52動画 / 13,619 frames ベース）:
 
 | GPU 数 | 想定時間 |
 |---|---|
 | 1 | ~3.8 時間 |
 | 2 | ~1.9 時間 |
 | 4 | ~57 分 |
-| 6 | ~38 分 |
+| 6 | ~38 分（最長動画 GX010003 ≈ 35 分が下限）|
 
-実装方針メモ:
-- `hamer_parallel(input_dir, gpus=[0,2,4,6], ...)` を `hamer_api.py` に追加
-- 各 GPU にサブプロセスを起動し `CUDA_VISIBLE_DEVICES=<gpu>` を設定
-- 動画リストを **frame 数による貪欲 LPT 分割**で割り当てると偏りが小さい
-- 各ワーカーは `build_pipeline()` を1回だけ実行して担当動画を処理
-- 既存出力スキップ（`skip_existing=True`）は維持
-- 一度プロトタイプは作成済み（コミット履歴を参照） — 動作確認まで完了したが本採用は保留
+### 次の候補（未着手）
 
-LPT 分割の下限は最長動画 (GX010003: 2099f ≈ 35分) なので、6 GPU より多くても 35 分未満には下がらない。
+- **左右ラベルの temporal consistency** — フレーム間で L/R が flip する問題、IoU トラッキングで吸収
+- **時系列スムージング** — 1€ filter / Savitzky-Golay
+- **逐次 yield / コールバック API** — リアルタイム用途
+- **検出フィルタ** — スコア閾値、ROI、最大手数
+- **`return_in_memory` モード** — ファイル書かず Python dict 返却
+- **MANO の左手 x-mirror 自動適用オプション**
+- **デバッグ可視化** — 特定フレームだけ画像出力
 
