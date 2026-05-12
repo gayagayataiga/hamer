@@ -188,9 +188,11 @@ def hamer(
     results = []
     for src in candidates:
         stem = src.stem
-        full_out = output_dir / f"{stem}_full.mp4"
-        hands_out = output_dir / f"{stem}_handsonly.mp4"
-        wrist_out = output_dir / f"{stem}_wrist.json"
+        video_dir = output_dir / stem
+        video_dir.mkdir(parents=True, exist_ok=True)
+        full_out = video_dir / "full.mp4"
+        hands_out = video_dir / "handsonly.mp4"
+        wrist_out = video_dir / "wrist.json"
 
         if wrist_only:
             if skip_existing and wrist_out.exists():
