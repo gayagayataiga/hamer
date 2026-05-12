@@ -157,7 +157,8 @@ def build_pipeline(checkpoint=DEFAULT_CHECKPOINT, body_detector='vitdet', hamer_
     }
 
 
-def detect_hand_bboxes(img_cv2, detector, cpm, min_bbox_side=64):
+def detect_hand_bboxes(img_cv2, detector, cpm, min_bbox_side=64,
+                       reject_lr_crossing=True):
     """Run body detector + ViTPose, return (bboxes Nx4, is_right N) or (None, None).
 
     Per detected person ROI, ViTPose returns 21 left-hand and 21 right-hand
@@ -170,6 +171,12 @@ def detect_hand_bboxes(img_cv2, detector, cpm, min_bbox_side=64):
     A minimum bbox short-side filter rejects very small detections like
     monitor reflections (C in HAND_DEDUP_PLAN.md). Set ``min_bbox_side=0`` to
     disable.
+
+    For egocentric video (GoPro / head-mounted), the wearer's left hand is
+    on the left of the frame and the right hand is on the right. If
+    ``reject_lr_crossing`` is True (default), any (L, R) pair whose x-center
+    is reversed (L is to the right of R) drops the lower-confidence side
+    (F-1 in HAND_LR_CROSSING_PLAN.md). Disable for third-person footage.
     """
     det_out = detector(img_cv2)
     img_rgb = img_cv2[:, :, ::-1]
@@ -187,7 +194,7 @@ def detect_hand_bboxes(img_cv2, detector, cpm, min_bbox_side=64):
         [np.concatenate([pred_bboxes, pred_scores[:, None]], axis=1)],
     )
 
-    bboxes, is_right = [], []
+    bboxes, is_right, confidences = [], [], []
     for vitposes in vitposes_out:
         left_hand_keyp = vitposes['keypoints'][-42:-21]
         right_hand_keyp = vitposes['keypoints'][-21:]
@@ -205,7 +212,7 @@ def detect_hand_bboxes(img_cv2, detector, cpm, min_bbox_side=64):
                 best = (mean_conf, bbox, side)
         if best is None:
             continue
-        _, bbox, side = best
+        conf, bbox, side = best
 
         # C: reject very small bboxes (likely reflections / false positives).
         if min_bbox_side > 0:
@@ -215,10 +222,40 @@ def detect_hand_bboxes(img_cv2, detector, cpm, min_bbox_side=64):
 
         bboxes.append(bbox)
         is_right.append(side)
+        confidences.append(conf)
 
     if not bboxes:
         return None, None
-    return np.stack(bboxes), np.stack(is_right)
+
+    bboxes_a = np.stack(bboxes)
+    is_right_a = np.stack(is_right)
+    conf_a = np.array(confidences)
+
+    # F-1: drop L/R pairs whose x-centers are reversed (egocentric assumption).
+    if reject_lr_crossing and len(bboxes_a) >= 2:
+        cx = (bboxes_a[:, 0] + bboxes_a[:, 2]) / 2
+        keep = np.ones(len(bboxes_a), dtype=bool)
+        L_idx = np.where(is_right_a == 0)[0]
+        R_idx = np.where(is_right_a == 1)[0]
+        for li in L_idx:
+            if not keep[li]:
+                continue
+            for ri in R_idx:
+                if not keep[ri]:
+                    continue
+                if cx[li] > cx[ri]:
+                    # reversed -> drop lower-confidence side
+                    if conf_a[li] < conf_a[ri]:
+                        keep[li] = False
+                        break
+                    else:
+                        keep[ri] = False
+        bboxes_a = bboxes_a[keep]
+        is_right_a = is_right_a[keep]
+        if len(bboxes_a) == 0:
+            return None, None
+
+    return bboxes_a, is_right_a
 
 
 def process_frame(img_cv2, pipe, rescale_factor=2.0, batch_size=8,
