@@ -157,8 +157,20 @@ def build_pipeline(checkpoint=DEFAULT_CHECKPOINT, body_detector='vitdet', hamer_
     }
 
 
-def detect_hand_bboxes(img_cv2, detector, cpm):
-    """Run body detector + ViTPose, return (bboxes Nx4, is_right N) or (None, None)."""
+def detect_hand_bboxes(img_cv2, detector, cpm, min_bbox_side=64):
+    """Run body detector + ViTPose, return (bboxes Nx4, is_right N) or (None, None).
+
+    Per detected person ROI, ViTPose returns 21 left-hand and 21 right-hand
+    keypoints. The original HaMeR demo emitted a bbox for both sides whenever
+    each had >=4 confident points, which produced duplicate detections for a
+    single visible hand (both the L and R keypoint sets fire for the same
+    region). To prevent that we keep only the higher-confidence side per ROI
+    (A in HAND_DEDUP_PLAN.md).
+
+    A minimum bbox short-side filter rejects very small detections like
+    monitor reflections (C in HAND_DEDUP_PLAN.md). Set ``min_bbox_side=0`` to
+    disable.
+    """
     det_out = detector(img_cv2)
     img_rgb = img_cv2[:, :, ::-1]
 
@@ -179,13 +191,30 @@ def detect_hand_bboxes(img_cv2, detector, cpm):
     for vitposes in vitposes_out:
         left_hand_keyp = vitposes['keypoints'][-42:-21]
         right_hand_keyp = vitposes['keypoints'][-21:]
+
+        # A: pick the higher-confidence side per ROI.
+        best = None  # (mean_conf, bbox, side)
         for keyp, side in [(left_hand_keyp, 0), (right_hand_keyp, 1)]:
             valid = keyp[:, 2] > 0.5
-            if valid.sum() > 3:
-                bbox = [keyp[valid, 0].min(), keyp[valid, 1].min(),
-                        keyp[valid, 0].max(), keyp[valid, 1].max()]
-                bboxes.append(bbox)
-                is_right.append(side)
+            if valid.sum() <= 3:
+                continue
+            mean_conf = float(keyp[valid, 2].mean())
+            bbox = [float(keyp[valid, 0].min()), float(keyp[valid, 1].min()),
+                    float(keyp[valid, 0].max()), float(keyp[valid, 1].max())]
+            if best is None or mean_conf > best[0]:
+                best = (mean_conf, bbox, side)
+        if best is None:
+            continue
+        _, bbox, side = best
+
+        # C: reject very small bboxes (likely reflections / false positives).
+        if min_bbox_side > 0:
+            short_side = min(bbox[2] - bbox[0], bbox[3] - bbox[1])
+            if short_side < min_bbox_side:
+                continue
+
+        bboxes.append(bbox)
+        is_right.append(side)
 
     if not bboxes:
         return None, None
