@@ -194,13 +194,20 @@ def detect_hand_bboxes(img_cv2, detector, cpm):
 
 def process_frame(img_cv2, pipe, rescale_factor=2.0, batch_size=8,
                   render_side=False, hands_only=False, bg_color=(1.0, 1.0, 1.0),
-                  return_hands_info=False, wrist_only=False):
+                  return_hands_info=False, wrist_only=False,
+                  dual_output=False):
     """Run HaMeR on one BGR frame. Returns (main_bgr, side_bgr_or_None).
 
     If hands_only=True, the main output renders the hand meshes on a flat
     bg_color background (RGB in [0,1]) instead of overlaying on the input image.
     If no hands are detected, returns the input frame unchanged (overlay) or a
     blank background of the input size (hands_only).
+
+    If dual_output=True, both composites are produced in a single inference
+    pass and the function returns a 4-tuple
+    ``(overlay_bgr, handsonly_bgr, side_bgr, hands_info)``. ``hands_only`` and
+    ``return_hands_info`` are ignored in this mode (hands_info is always
+    returned; both BGR images are always returned).
 
     If return_hands_info=True, returns (main_bgr, side_bgr_or_None, hands_info)
     where hands_info is a list of per-hand dicts with keys:
@@ -231,6 +238,8 @@ def process_frame(img_cv2, pipe, rescale_factor=2.0, batch_size=8,
 
     bboxes, right = detect_hand_bboxes(img_cv2, pipe['detector'], pipe['cpm'])
     if bboxes is None:
+        if dual_output:
+            return img_cv2.copy(), _blank_like(), (_blank_like() if render_side else None), []
         if wrist_only:
             return None, None, []
         main = _blank_like() if hands_only else img_cv2.copy()
@@ -265,7 +274,8 @@ def process_frame(img_cv2, pipe, rescale_factor=2.0, batch_size=8,
         ).detach().cpu().numpy()
 
         joints_np = out['pred_keypoints_3d'].detach().cpu().numpy()
-        verts_np = None if wrist_only else out['pred_vertices'].detach().cpu().numpy()
+        need_verts = dual_output or (not wrist_only)
+        verts_np = out['pred_vertices'].detach().cpu().numpy() if need_verts else None
         mano_go = out['pred_mano_params']['global_orient'].detach().cpu().numpy()
         mano_hp = out['pred_mano_params']['hand_pose'].detach().cpu().numpy()
         mano_bt = out['pred_mano_params']['betas'].detach().cpu().numpy()
@@ -273,7 +283,7 @@ def process_frame(img_cv2, pipe, rescale_factor=2.0, batch_size=8,
         for n in range(batch['img'].shape[0]):
             is_right_n = batch['right'][n].cpu().numpy()
             sign = 2 * float(is_right_n) - 1
-            if not wrist_only:
+            if need_verts:
                 verts = verts_np[n]
                 verts[:, 0] = sign * verts[:, 0]
                 all_verts.append(verts)
@@ -313,10 +323,12 @@ def process_frame(img_cv2, pipe, rescale_factor=2.0, batch_size=8,
                 },
             })
 
-    if wrist_only:
+    if wrist_only and not dual_output:
         return None, None, hands_info
 
     if not all_verts:
+        if dual_output:
+            return img_cv2.copy(), _blank_like(), (_blank_like() if render_side else None), hands_info
         main = _blank_like() if hands_only else img_cv2.copy()
         side = (_blank_like() if hands_only else img_cv2.copy()) if render_side else None
         if return_hands_info:
@@ -334,15 +346,24 @@ def process_frame(img_cv2, pipe, rescale_factor=2.0, batch_size=8,
     )
 
     input_img = img_cv2.astype(np.float32)[:, :, ::-1] / 255.0
-    if hands_only:
-        bg = np.ones_like(input_img)
-        bg[:, :, 0] = bg_color[0]
-        bg[:, :, 1] = bg_color[1]
-        bg[:, :, 2] = bg_color[2]
-        composite = bg * (1 - cam_view[:, :, 3:]) + cam_view[:, :, :3] * cam_view[:, :, 3:]
+    alpha = cam_view[:, :, 3:]
+    rgb = cam_view[:, :, :3]
+
+    def _to_bgr(comp):
+        return (255 * comp[:, :, ::-1]).clip(0, 255).astype(np.uint8)
+
+    bg_flat = np.empty_like(input_img)
+    bg_flat[:, :, 0] = bg_color[0]
+    bg_flat[:, :, 1] = bg_color[1]
+    bg_flat[:, :, 2] = bg_color[2]
+
+    overlay_bgr = handsonly_bgr = None
+    if dual_output:
+        overlay_bgr = _to_bgr(input_img * (1 - alpha) + rgb * alpha)
+        handsonly_bgr = _to_bgr(bg_flat * (1 - alpha) + rgb * alpha)
     else:
-        composite = input_img * (1 - cam_view[:, :, 3:]) + cam_view[:, :, :3] * cam_view[:, :, 3:]
-    overlay_bgr = (255 * composite[:, :, ::-1]).clip(0, 255).astype(np.uint8)
+        bg_img = bg_flat if hands_only else input_img
+        overlay_bgr = _to_bgr(bg_img * (1 - alpha) + rgb * alpha)
 
     side_bgr = None
     if render_side:
@@ -352,8 +373,10 @@ def process_frame(img_cv2, pipe, rescale_factor=2.0, batch_size=8,
         )
         white = np.ones_like(input_img)
         side_blend = white * (1 - side_view[:, :, 3:]) + side_view[:, :, :3] * side_view[:, :, 3:]
-        side_bgr = (255 * side_blend[:, :, ::-1]).clip(0, 255).astype(np.uint8)
+        side_bgr = _to_bgr(side_blend)
 
+    if dual_output:
+        return overlay_bgr, handsonly_bgr, side_bgr, hands_info
     if return_hands_info:
         return overlay_bgr, side_bgr, hands_info
     return overlay_bgr, side_bgr
@@ -367,9 +390,20 @@ def process_video(input_path, output_path, pipe,
                   hands_only=False, bg_color=(1.0, 1.0, 1.0),
                   async_io=False, prefetch=4,
                   wrist_json_path=None, wrist_only=False,
-                  detector_name=None):
+                  detector_name=None,
+                  handsonly_output_path=None):
+    """Run HaMeR on a video.
+
+    If ``handsonly_output_path`` is set alongside ``output_path``, both an
+    overlay video and a handsonly video are written in a **single inference
+    pass** (the meshes are rendered once per frame and composited twice). In
+    that case the ``hands_only`` argument is ignored.
+    """
     if wrist_only and wrist_json_path is None:
         raise ValueError("wrist_only=True requires wrist_json_path")
+    if wrist_only and handsonly_output_path is not None:
+        raise ValueError("wrist_only=True is incompatible with handsonly_output_path")
+    dual = handsonly_output_path is not None and not wrist_only
     cap = cv2.VideoCapture(str(input_path))
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {input_path}")
@@ -385,10 +419,14 @@ def process_video(input_path, output_path, pipe,
 
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     writer = None
+    handsonly_writer = None
     side_writer = None
     if not wrist_only:
         os.makedirs(os.path.dirname(os.path.abspath(output_path)) or '.', exist_ok=True)
         writer = cv2.VideoWriter(str(output_path), fourcc, fps / max(stride, 1), (width, height))
+        if dual:
+            os.makedirs(os.path.dirname(os.path.abspath(handsonly_output_path)) or '.', exist_ok=True)
+            handsonly_writer = cv2.VideoWriter(str(handsonly_output_path), fourcc, fps / max(stride, 1), (width, height))
         if side_output_path is not None:
             side_writer = cv2.VideoWriter(str(side_output_path), fourcc, fps / max(stride, 1), (width, height))
 
@@ -421,9 +459,11 @@ def process_video(input_path, output_path, pipe,
                 item = out_q.get()
                 if item is SENTINEL:
                     break
-                ov, sd, _hi = item
+                ov, ho, sd = item
                 if writer is not None and ov is not None:
                     writer.write(ov)
+                if handsonly_writer is not None and ho is not None:
+                    handsonly_writer.write(ho)
                 if side_writer is not None and sd is not None:
                     side_writer.write(sd)
 
@@ -438,19 +478,30 @@ def process_video(input_path, output_path, pipe,
                 if item is SENTINEL:
                     break
                 fi, frame = item
-                overlay, side, hinfo = process_frame(
-                    frame, pipe,
-                    rescale_factor=rescale_factor,
-                    batch_size=batch_size,
-                    render_side=(side_writer is not None),
-                    hands_only=hands_only,
-                    bg_color=bg_color,
-                    return_hands_info=True,
-                    wrist_only=wrist_only,
-                )
+                if dual:
+                    overlay, handsonly, side, hinfo = process_frame(
+                        frame, pipe,
+                        rescale_factor=rescale_factor,
+                        batch_size=batch_size,
+                        render_side=(side_writer is not None),
+                        bg_color=bg_color,
+                        dual_output=True,
+                    )
+                else:
+                    overlay, side, hinfo = process_frame(
+                        frame, pipe,
+                        rescale_factor=rescale_factor,
+                        batch_size=batch_size,
+                        render_side=(side_writer is not None),
+                        hands_only=hands_only,
+                        bg_color=bg_color,
+                        return_hands_info=True,
+                        wrist_only=wrist_only,
+                    )
+                    handsonly = None
                 if want_wrist:
                     wrist_records.append({'frame': fi, 'hands': hinfo})
-                out_q.put((overlay, side, hinfo))
+                out_q.put((overlay, handsonly, side))
                 written += 1
                 if written % 10 == 0:
                     print(f"[{written}] frame {fi}/{end_frame} (range {start_frame}-{end_frame}) [async]", flush=True)
@@ -463,6 +514,8 @@ def process_video(input_path, output_path, pipe,
             cap.release()
             if writer is not None:
                 writer.release()
+            if handsonly_writer is not None:
+                handsonly_writer.release()
             if side_writer is not None:
                 side_writer.release()
         if want_wrist:
@@ -480,20 +533,33 @@ def process_video(input_path, output_path, pipe,
                 break
             local_idx = frame_idx - start_frame
             if local_idx % stride == 0:
-                overlay, side, hinfo = process_frame(
-                    frame, pipe,
-                    rescale_factor=rescale_factor,
-                    batch_size=batch_size,
-                    render_side=(side_writer is not None),
-                    hands_only=hands_only,
-                    bg_color=bg_color,
-                    return_hands_info=True,
-                    wrist_only=wrist_only,
-                )
+                if dual:
+                    overlay, handsonly, side, hinfo = process_frame(
+                        frame, pipe,
+                        rescale_factor=rescale_factor,
+                        batch_size=batch_size,
+                        render_side=(side_writer is not None),
+                        bg_color=bg_color,
+                        dual_output=True,
+                    )
+                else:
+                    overlay, side, hinfo = process_frame(
+                        frame, pipe,
+                        rescale_factor=rescale_factor,
+                        batch_size=batch_size,
+                        render_side=(side_writer is not None),
+                        hands_only=hands_only,
+                        bg_color=bg_color,
+                        return_hands_info=True,
+                        wrist_only=wrist_only,
+                    )
+                    handsonly = None
                 if want_wrist:
                     wrist_records.append({'frame': frame_idx, 'hands': hinfo})
                 if writer is not None and overlay is not None:
                     writer.write(overlay)
+                if handsonly_writer is not None and handsonly is not None:
+                    handsonly_writer.write(handsonly)
                 if side_writer is not None and side is not None:
                     side_writer.write(side)
                 written += 1
@@ -506,6 +572,8 @@ def process_video(input_path, output_path, pipe,
         cap.release()
         if writer is not None:
             writer.release()
+        if handsonly_writer is not None:
+            handsonly_writer.release()
         if side_writer is not None:
             side_writer.release()
 

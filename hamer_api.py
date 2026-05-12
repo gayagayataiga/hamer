@@ -86,17 +86,24 @@ class Hamer:
             result['overlay'] = overlay
         return result
 
-    def infer_video(self, input_path, output_video=None, wrist_json=None,
-                    hands_only=False, rescale_factor=2.0, batch_size=8,
+    def infer_video(self, input_path, output_video=None, handsonly_video=None,
+                    wrist_json=None, hands_only=False,
+                    rescale_factor=2.0, batch_size=8,
                     async_io=True, bg_color=(1.0, 1.0, 1.0)):
         """Run HaMeR on a single video.
 
-        At least one of ``output_video`` or ``wrist_json`` must be given.
-        If only ``wrist_json`` is given, no mp4 is written (fast path).
+        At least one of ``output_video``/``handsonly_video``/``wrist_json``
+        must be given. If only ``wrist_json`` is given, no mp4 is written
+        (fast path). If both ``output_video`` and ``handsonly_video`` are
+        given, both videos are produced in a single inference pass.
         """
-        if output_video is None and wrist_json is None:
-            raise ValueError("infer_video: need output_video or wrist_json")
-        wrist_only = output_video is None
+        if output_video is None and wrist_json is None and handsonly_video is None:
+            raise ValueError("infer_video: need at least one output")
+        if handsonly_video is not None and output_video is None:
+            # produce only handsonly: use the legacy single-output path
+            output_video, handsonly_video = handsonly_video, None
+            hands_only = True
+        wrist_only = output_video is None and handsonly_video is None
         # process_video requires output_path even in wrist_only mode (unused).
         out_path = str(output_video) if output_video is not None else '/dev/null'
         process_video(
@@ -109,6 +116,7 @@ class Hamer:
             wrist_json_path=str(wrist_json) if wrist_json is not None else None,
             wrist_only=wrist_only,
             detector_name=self.detector_name,
+            handsonly_output_path=str(handsonly_video) if handsonly_video is not None else None,
         )
 
     def infer_dir(self, input_dir, **kwargs):
@@ -206,29 +214,17 @@ def hamer(
             print(f"[hamer] skip (exists): {src.name}")
             continue
 
-        write_wrist = not (skip_existing and wrist_out.exists())
-        print(f"[hamer] {src.name} -> {full_out.name}")
-        if not (skip_existing and full_out.exists()) or write_wrist:
-            process_video(
-                str(src), str(full_out), pipe,
-                rescale_factor=rescale_factor,
-                batch_size=batch_size,
-                hands_only=False,
-                async_io=async_io,
-                wrist_json_path=str(wrist_out) if write_wrist else None,
-                detector_name=body_detector,
-            )
-
-        print(f"[hamer] {src.name} -> {hands_out.name}")
-        if not (skip_existing and hands_out.exists()):
-            process_video(
-                str(src), str(hands_out), pipe,
-                rescale_factor=rescale_factor,
-                batch_size=batch_size,
-                hands_only=True,
-                bg_color=bg_color,
-                async_io=async_io,
-            )
+        print(f"[hamer] {src.name} -> {full_out.name} + {hands_out.name}")
+        process_video(
+            str(src), str(full_out), pipe,
+            rescale_factor=rescale_factor,
+            batch_size=batch_size,
+            bg_color=bg_color,
+            async_io=async_io,
+            wrist_json_path=str(wrist_out),
+            detector_name=body_detector,
+            handsonly_output_path=str(hands_out),
+        )
 
         results.append({
             'input': str(src),

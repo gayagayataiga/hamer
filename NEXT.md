@@ -117,6 +117,34 @@ python hamer_api.py /path/to/videos --output_dir out --wrist_only \
 
 **再確認（2026-05-12 夜、`RUN_PARALLEL.md` の指示書ベース）:** GPU 2,3 で `episode_000204.mp4` (406f) と `GX010052.MP4` (79f) を並列実行。LPT 分配メッセージ表示、両ワーカー rc=0、v2 スキーマ JSON 正常生成（`frames`/`schema_version`/`detector` 全て揃う）。指示書 L66-68 の動作確認ポイントを全てパス。
 
+### 単パス dual-output 化（2026-05-13）
+
+旧 `hamer()` は `_full.mp4` と `_handsonly.mp4` を別々に作るため `process_video` を 2 回呼んでいた。**推論+レンダ結果が同一なのに 2 回回す設計ミス**だった。1 回の推論でメッシュ RGBA を作り、それを「入力画像へ合成 → full」と「単色背景へ合成 → handsonly」の 2 種類に composite すれば 1 パスで両方作れる。
+
+**変更内容:**
+- `process_frame` に `dual_output=True` フラグ追加。RGBA メッシュを1回だけ render、`(overlay_bgr, handsonly_bgr, side_bgr, hands_info)` の **4-tuple** を返す
+- `process_video` に `handsonly_output_path=None` 引数。両指定なら 2 つの `VideoWriter` を駆動して 1 パスで両動画書き出し（async path / sync path の両方に対応）
+- `hamer_api.hamer()` を `process_video` 1 回呼びにリファクタ（`skip_existing` は3出力揃って初めてスキップする all-or-nothing 判定に整理）
+- `Hamer.infer_video` に `handsonly_video=` 引数追加。両指定で dual モード、handsonly のみ指定なら旧 `hands_only=True` 経路へフォールバック
+
+**効果:** 推論コスト約半減、レンダ呼び出しも半減。1 動画あたりの実時間は ~2倍速
+
+**動作確認:** 15 frame クリップで dual モードと wrist_only モード両方で正常動作確認
+
+### GX010085/86 並列再走（実行中、2026-05-13）
+
+`/home/gayagaya/video/new/` の **2 本（GX010085: 1397f, GX010086: 1630f）**を単パス dual-output 化したコードで再走。
+最初は GPU 3 単独で開始 → 途中で GPU 1 が空いたので 2 GPU 並列に切替。
+- 旧コード（2 パス）だと推定 4〜5 時間級
+- 新コード（1 パス）+ 2 GPU 並列で **~75 分**（律速は GX010086 の 1630f / 0.4fps）
+
+**運用メモ:**
+- 出力は `result/GX010085_full.mp4` / `_handsonly.mp4` / `_wrist.json`（86 も同様）
+- 走行中ジョブのログ: `/tmp/hamer_gpu1.log`（GX010086）, `/tmp/hamer_gpu3.log`（GX010085）
+- GPU 3 を `--files_from` で 1 本だけに絞らないと、85 終了後にフォルダ自動ループで 86 を再処理してしまう（重複ワーク回避）
+
+別セッションから走らせる手順は `RUN_VIDEO_NEW.md` に集約。
+
 ### 動作確認
 
 - v2 スキーマ: 15 フレームのクリップで全フィールドが正しく出ることを確認（`joints_2d[0] == wrist_2d` 一致）
