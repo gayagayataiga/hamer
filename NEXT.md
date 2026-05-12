@@ -66,6 +66,28 @@ h.infer_dir('/path/to/videos', output_dir='out', wrist_only=True)
 
 **メモ:** `/home/gayagaya/hamer` と `/misc/dl00/gayagaya/hamer` は **bind mount で同一物理ファイル**（inode 一致）。`result/wrist/` 内のファイルは1セットしかないので両側を別々に再走する必要はない。
 
+### Git remote / ブランチ運用
+
+`main` は upstream に追従、改造は `personal` ブランチに分離。
+
+```
+origin    → git@github.com:gayagayataiga/hamer.git  (fetch & push)   ← fork
+upstream  → git@github.com:geopavlakos/hamer.git    (fetch only, push DISABLE) ← 本家
+```
+
+- `git config --local user.email ryotsu.kankiti.kotikame@gmail.com` / `user.name gayagayataiga` をローカル設定済み
+- `main`: upstream/main と一致（現在 `3a01849`）
+- `personal`: 本セッションの改造コミット（現在 `3b81f37 Add Hamer class API and expand wrist JSON to schema v2`）
+- upstream の push URL は `DISABLE` で誤 push を防止
+
+**本家更新を取り込む手順:**
+```bash
+git fetch upstream
+git checkout main && git merge --ff-only upstream/main
+git push origin main
+git checkout personal && git merge main   # or rebase
+```
+
 ### 動作確認
 
 - v2 スキーマ: 15 フレームのクリップで全フィールドが正しく出ることを確認（`joints_2d[0] == wrist_2d` 一致）
