@@ -131,17 +131,29 @@ python hamer_api.py /path/to/videos --output_dir out --wrist_only \
 
 **動作確認:** 15 frame クリップで dual モードと wrist_only モード両方で正常動作確認
 
-### GX010085/86 並列再走（実行中、2026-05-13）
+### GX010085/86 並列再走（完了、2026-05-13）
 
 `/home/gayagaya/video/new/` の **2 本（GX010085: 1397f, GX010086: 1630f）**を単パス dual-output 化したコードで再走。
 最初は GPU 3 単独で開始 → 途中で GPU 1 が空いたので 2 GPU 並列に切替。
 - 旧コード（2 パス）だと推定 4〜5 時間級
-- 新コード（1 パス）+ 2 GPU 並列で **~75 分**（律速は GX010086 の 1630f / 0.4fps）
+- 新コード（1 パス）+ 2 GPU 並列で **wall clock 約 60 分**で完了
+  - GPU 1: GX010086 → 約 60 分（0.46 fps）
+  - GPU 3: GX010085 → 約 53 分（0.44 fps）
 
-**運用メモ:**
-- 出力は `result/GX010085_full.mp4` / `_handsonly.mp4` / `_wrist.json`（86 も同様）
-- 走行中ジョブのログ: `/tmp/hamer_gpu1.log`（GX010086）, `/tmp/hamer_gpu3.log`（GX010085）
-- GPU 3 を `--files_from` で 1 本だけに絞らないと、85 終了後にフォルダ自動ループで 86 を再処理してしまう（重複ワーク回避）
+**生成物（全 6 ファイル、frames 数も期待通り）:**
+
+| ファイル | frames |
+|---|---|
+| `result/GX010085_full.mp4` | 1397 |
+| `result/GX010085_handsonly.mp4` | 1397 |
+| `result/GX010085_wrist.json` | schema=2, 1397 |
+| `result/GX010086_full.mp4` | 1630 |
+| `result/GX010086_handsonly.mp4` | 1630 |
+| `result/GX010086_wrist.json` | schema=2, 1630 |
+
+**運用メモ（次回以降の参考）:**
+- GPU 3 を最初フォルダ全体（85+86）対象で起動してたので、途中で kill + `--files_from` で 1 本に絞って再起動した。フォルダ自動ループだと早く終わった側を後発が上書きしてしまうので、並列時は `--files_from` 推奨
+- 走行中ログ: `/tmp/hamer_gpu1.log`（GX010086）/ `/tmp/hamer_gpu3.log`（GX010085）
 
 別セッションから走らせる手順は `RUN_VIDEO_NEW.md` に集約。
 
