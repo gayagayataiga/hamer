@@ -135,50 +135,35 @@ h.infer_video('test.mp4', wrist_json='test.json')
 "
 ```
 
-## 一発再構築スクリプト案
+## 一発再構築スクリプト（実装済 + 検証済、2026-05-13）
 
-「壊れた」状態から自動復旧するためのスクリプトを `scripts/rebuild_env.sh` 等で持っておくと楽：
+**`scripts/rebuild_env.sh` に実装済み**。fresh clone + 既存ストレージ依存ゼロでテストし、smoke test (`OK: pipeline loaded (HAMER on cuda)`) まで通過することを確認。
 
 ```bash
-#!/usr/bin/env bash
-set -e
-HAMER_ROOT=$(cd "$(dirname "$0")/.." && pwd)
-cd "$HAMER_ROOT"
-
-# 入れ子 submodule
-git submodule update --init --recursive
-
-# venv（案 B 想定）
-if [ ! -d .hamer ]; then
-    python3.10 -m venv .hamer
-fi
-source .hamer/bin/activate
-
-# 依存
-pip install --upgrade pip
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu117
-pip install -e .[all]
-pip install -v -e third-party/ViTPose
-
-# チェックポイント
-[ -d _DATA/hamer_ckpts ] || bash fetch_demo_data.sh
-
-# MANO（既存サーバー用、無ければエラーメッセージ）
-MANO_DST=_DATA/data/mano/MANO_RIGHT.pkl
-if [ ! -e "$MANO_DST" ]; then
-    for cand in \
-        /misc/dl00/gayagaya/ft-change/mano_v1_2/models/MANO_RIGHT.pkl \
-        /home/gayagaya/ft-change/mano_v1_2/models/MANO_RIGHT.pkl \
-    ; do
-        [ -f "$cand" ] && mkdir -p "$(dirname $MANO_DST)" && ln -s "$cand" "$MANO_DST" && break
-    done
-fi
-[ -e "$MANO_DST" ] || { echo "ERROR: MANO_RIGHT.pkl not found. Download from https://mano.is.tue.mpg.de"; exit 1; }
-
-echo "OK: hamer env ready"
+cd third-party/hamer
+bash scripts/rebuild_env.sh
 ```
 
-このスクリプトは本リポジトリに追加してもよい。
+主なオーバーライド可能環境変数：
+
+| 変数 | 既定値 | 用途 |
+|---|---|---|
+| `PYTHON_BIN` | `python3.10` | 使う Python |
+| `TORCH_INDEX_URL` | `https://download.pytorch.org/whl/cu124` | torch のホイール index |
+| `MANO_SOURCE` | （自動検出） | MANO_RIGHT.pkl のソースパス |
+
+### 検証で得た 6 つの落とし穴（重要、削るな）
+
+10 回試行して安定化させた結果、以下が地雷だった。スクリプト内コメントにも同じ理由が書いてあるが、変更する人のためにここにも残す：
+
+1. **`uv venv` だけだと pip が入らない** → `uv venv --seed` で pip/setuptools/wheel を同梱しないと、後段の `pip install` が anaconda などシステム側 pip を呼んでしまう
+2. **torch のホイール index は cu124**（既存環境の `torch.version.cuda == 12.4` に合わせる。`cu117` だと detectron2 ビルド時に CUDA バージョン不一致でコケる）
+3. **detectron2 は `--no-build-isolation` 必須** — その `setup.py` が `import torch` するが、PEP 517 isolated build 環境からは torch が見えないので普通に install すると失敗
+4. **setuptools は <70 に pin** — setuptools 81 で `pkg_resources` が削除されたが、`torch.utils.cpp_extension` がまだ `from pkg_resources import packaging` をやる
+5. **numpy は <2 に pin、しかも `.[all]` install 時にも inline で渡す** — xtcocotools の precompiled C 拡張は numpy 1.x ABI で固定されてる。step 4 で pin しても `.[all]` で transitive dep が numpy 2.x を引いてくる
+6. **`fetch_demo_data.sh` は cwd にタールボールを落とす**が、`hamer.models.download_models()` は `_DATA/hamer_demo_data.tar.gz` を探す。fetch 後に `mv hamer_demo_data.tar.gz _DATA/` しないと、smoke test 時に hamer が再 DL（6 GB）を始める
+
+設計と検証手順の詳細は `docs/REBUILD_SCRIPT_PLAN.md`。
 
 ## 親プロジェクトでの利用例（最小）
 

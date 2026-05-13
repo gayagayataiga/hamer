@@ -209,6 +209,25 @@ GX010013 で測定すると dedup-only 90.2% → dedup+F-1 で **90.7%**。改�
 - 見込み: ~3 時間で完走
 - 経緯: 一度 wrist_only モードで 4 並列を組み始めたが、GX010013 の品質チェック後に「mp4 も新コードで揃えたい」となり、wrist_only ジョブを kill して dual-output に切替
 
+### サブモジュール化向け再構築スクリプト（2026-05-13）
+
+このリポジトリを別プロジェクトに submodule で取り込んだ際、`.hamer/` venv と `_DATA/` ペイロードが消えて即座に壊れる。一発復旧するために `scripts/rebuild_env.sh` を実装し、fresh clone から smoke test 通過まで自動で進むようにした。
+
+- ランブック: `docs/SUBMODULE_SETUP.md`
+- 設計と検証戦略: `docs/REBUILD_SCRIPT_PLAN.md`
+- 実装: `scripts/rebuild_env.sh`（12 ステップ、冪等、`uv venv --seed` 優先、各環境変数で override 可）
+
+`/tmp/hamer_rebuild_test/` に fresh clone して 10 回試行し、smoke test (`OK: pipeline loaded (HAMER on cuda)`) まで通過することを確認。安定化過程で踏み抜いた地雷 6 つ：
+
+1. `uv venv` だけだと pip が入らず anaconda の pip を呼ぶ → `--seed`
+2. torch wheel index は **cu124**（既存環境が `torch.version.cuda == 12.4`、cu117 は detectron2 で CUDA mismatch）
+3. detectron2 の `setup.py` が `import torch` するので **`--no-build-isolation`**
+4. setuptools 81 で `pkg_resources` 廃止 → torch.utils.cpp_extension が壊れるので **setuptools<70**
+5. xtcocotools の C 拡張が numpy 1.x ABI 固定 → **numpy<2** を step 4 で pin、かつ `.[all]` install にも inline で同 constraint
+6. `fetch_demo_data.sh` は tarball を cwd に置く / `download_models()` は `_DATA/` 直下を見る → 後段で `mv hamer_demo_data.tar.gz _DATA/` しないと 6 GB 再 DL
+
+commit `831a897` で本体・ドキュメント追加。
+
 ---
 
 ## 直近のセッションでやったこと（2026-05-12）
