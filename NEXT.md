@@ -163,6 +163,52 @@ python hamer_api.py /path/to/videos --output_dir out --wrist_only \
 - `Hamer` クラス: GPU 1 で `infer_image(path)` / `infer_image(ndarray, render=True)` / `infer_video(wrist_json)` 全て成功
 - `hamer_parallel`: GPU 1,2 の 2 ワーカー並列で 2 動画処理、両 worker rc=0
 
+### 手の重複検出を解消（dedup A+C / 2026-05-13）
+
+GX010086 の手数分布を見たら **2 手のフレームが 15% しかない**（残り 80%+ が 3〜6 手の過検出）ことが判明。`docs/HAND_DEDUP_PLAN.md` に診断と対策候補をまとめた上で **A（L/R 排他選択）+ C（最小サイズフィルタ）**を実装。
+
+**変更（`demo_video.py::detect_hand_bboxes`）:**
+- A: ViTPose の L 21pts / R 21pts のうち平均 confidence が高い側のみ採用（1 ROI から 1 bbox に絞る）
+- C: bbox 短辺 < 64 px なら捨てる（モニター反射などの偽検出を除外）
+
+**測定結果（dedup+F-1 込み）:**
+
+| 動画 | 修正前 2-hand% | 修正後 2-hand% |
+|---|---|---|
+| GX010086 | 15.2% | **93.9%** |
+| GX010013 | 26.1% | **90.7%** |
+
+### L/R 交差フィルタ F-1 追加（2026-05-13）
+
+エゴセントリック視点では装着者の左手が画像左、右手が画像右にあり、x 座標で交差することは通常起きない。`docs/HAND_LR_CROSSING_PLAN.md` の F-1 を実装：1 フレーム内の `is_right=0` と `is_right=1` のペアで x_center が逆転していたら低 confidence 側を棄却。
+
+- `detect_hand_bboxes(reject_lr_crossing=True)` がデフォルト ON
+- 三人称視点や腕組みを想定する場合は False に
+
+GX010013 で測定すると dedup-only 90.2% → dedup+F-1 で **90.7%**。改善幅は小（+0.5pt）だが、副作用がほぼ無く、コミット `e632b99` で投入。
+
+### 整理（cleanup phases、2026-05-13）
+
+`docs/CLEANUP_PLAN.md` に沿って実施：
+
+- **.gitignore に `/result/` 追加** — 単数形 `/result/` が漏れていて常に untracked 状態だったのを修正（commit `fb020c8`）
+- **D 不要ファイル削除** — `hamer_evaluation_data.tar.gz`, 空の `out_videos/`, `__pycache__/` を削除
+- **A `docs/` 整理** — ルートの `.md` を `docs/` と `docs/runbooks/` に移動。`NEXT.md` だけルート維持（commit `008fd4c`）
+- **B `result/<stem>/` サブディレクトリ化** — 旧 `result/GX010001_full.mp4` → `result/GX010001/full.mp4` 等にフラットレイアウトから 1 動画 1 ディレクトリへ。`hamer_api.hamer()` の出力命名も合わせて変更（commit `ca27660`）
+- **C wrist JSON 配置一本化** — B に吸収（不要）
+- **E `result/` をリポジトリ外に逃がす** — 未着手、ジョブ完了後
+
+下流参照は `/misc/dl00/gayagaya/` で grep して 0 ヒットなので配置自由に決められた。
+
+### 全動画 dedup+F-1 dual-output 再走（実行中、2026-05-13 深夜）
+
+`docs/CLEANUP_PLAN.md` 採用後の最終状態を全動画で揃えるため、`/misc/dl00/gayagaya/video/` の **31 本**を **dedup + F-1 + dual-output モード**で 4 GPU 並列再走。
+
+- 出力: `result/<stem>/{full,handsonly}.mp4` + `result/<stem>/wrist.json`
+- コマンド: `python hamer_api.py /misc/dl00/gayagaya/video --output_dir result --no_skip_existing --gpus 0,1,2,3 --log_dir /tmp/hamer_dual_logs`
+- 見込み: ~3 時間で完走
+- 経緯: 一度 wrist_only モードで 4 並列を組み始めたが、GX010013 の品質チェック後に「mp4 も新コードで揃えたい」となり、wrist_only ジョブを kill して dual-output に切替
+
 ---
 
 ## 直近のセッションでやったこと（2026-05-12）

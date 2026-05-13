@@ -158,7 +158,7 @@ def build_pipeline(checkpoint=DEFAULT_CHECKPOINT, body_detector='vitdet', hamer_
 
 
 def detect_hand_bboxes(img_cv2, detector, cpm, min_bbox_side=64,
-                       reject_lr_crossing=True):
+                       reject_lr_crossing=True, nms_iou=0.5):
     """Run body detector + ViTPose, return (bboxes Nx4, is_right N) or (None, None).
 
     Per detected person ROI, ViTPose returns 21 left-hand and 21 right-hand
@@ -171,6 +171,13 @@ def detect_hand_bboxes(img_cv2, detector, cpm, min_bbox_side=64,
     A minimum bbox short-side filter rejects very small detections like
     monitor reflections (C in HAND_DEDUP_PLAN.md). Set ``min_bbox_side=0`` to
     disable.
+
+    ``nms_iou`` runs IoU-based NMS across all collected bboxes (B in
+    HAND_DEDUP_PLAN.md). This catches the case where the body detector
+    fires two ROIs on the same person, yielding two same-label hand bboxes
+    that A cannot deduplicate (since A is per-ROI). Pairs with IoU above
+    the threshold drop the lower-confidence side. Set ``nms_iou=0`` or
+    ``None`` to disable.
 
     For egocentric video (GoPro / head-mounted), the wearer's left hand is
     on the left of the frame and the right hand is on the right. If
@@ -230,6 +237,36 @@ def detect_hand_bboxes(img_cv2, detector, cpm, min_bbox_side=64,
     bboxes_a = np.stack(bboxes)
     is_right_a = np.stack(is_right)
     conf_a = np.array(confidences)
+
+    # B: IoU-based NMS across all bboxes (regardless of label) — catches the
+    # case where the body detector fires multiple ROIs on the same person.
+    if nms_iou and len(bboxes_a) >= 2:
+        order = np.argsort(-conf_a)
+        keep = np.ones(len(bboxes_a), dtype=bool)
+        for ii in range(len(order)):
+            i = order[ii]
+            if not keep[i]:
+                continue
+            for jj in range(ii + 1, len(order)):
+                j = order[jj]
+                if not keep[j]:
+                    continue
+                ix1 = max(bboxes_a[i, 0], bboxes_a[j, 0])
+                iy1 = max(bboxes_a[i, 1], bboxes_a[j, 1])
+                ix2 = min(bboxes_a[i, 2], bboxes_a[j, 2])
+                iy2 = min(bboxes_a[i, 3], bboxes_a[j, 3])
+                inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+                area_i = (bboxes_a[i, 2] - bboxes_a[i, 0]) * (bboxes_a[i, 3] - bboxes_a[i, 1])
+                area_j = (bboxes_a[j, 2] - bboxes_a[j, 0]) * (bboxes_a[j, 3] - bboxes_a[j, 1])
+                union = area_i + area_j - inter
+                iou = inter / union if union > 0 else 0.0
+                if iou > nms_iou:
+                    keep[j] = False
+        bboxes_a = bboxes_a[keep]
+        is_right_a = is_right_a[keep]
+        conf_a = conf_a[keep]
+        if len(bboxes_a) == 0:
+            return None, None
 
     # F-1: drop L/R pairs whose x-centers are reversed (egocentric assumption).
     if reject_lr_crossing and len(bboxes_a) >= 2:
