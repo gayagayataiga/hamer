@@ -2,6 +2,7 @@
 /logs*/
 /results/
 /result/
+/result
 /sandbox/
 *.lock
 *.pt
