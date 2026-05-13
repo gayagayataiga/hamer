@@ -228,6 +228,50 @@ GX010013 で測定すると dedup-only 90.2% → dedup+F-1 で **90.7%**。改�
 
 commit `831a897` で本体・ドキュメント追加。
 
+### セッション総括（2026-05-12 〜 13）
+
+#### ✅ 完了
+
+**機能 / リファクタ:**
+- v2 JSON スキーマ（21 関節 2D/3D + MANO params + bbox + カメラ内部パラ）
+- `Hamer` クラス API（`infer_image` / `infer_video` / `infer_dir`）
+- `hamer_parallel`（4 GPU LPT 並列、`--gpus` / `--files_from` / `--log_dir`）
+- 単パス dual-output（mp4 + JSON を 1 推論で生成、実時間半減）
+- 手の重複除去 **dedup**（A: L/R 排他 + C: 最小サイズ → GX010013 で 26% → 90.7%、GX010086 で 15% → 93.9%）
+- L/R 交差フィルタ **F-1**（ego-centric 仮定、デフォルト ON）
+- IoU **NMS**（複数 ROI 跨ぎ重複対策、次回 run から自動適用）
+
+**データ:**
+- `/misc/dl00/gayagaya/video/` の 31 本 + `episode_000204` を `result/<stem>/{full,handsonly}.mp4 + wrist.json` で完備（dedup A+C+F-1 適用、NMS は未適用）
+
+**整理（`docs/CLEANUP_PLAN.md` 準拠）:**
+- `.gitignore` に `/result/` 追加
+- 不要ファイル削除（tarball / `out_videos/` / `__pycache__/`）
+- markdown を `docs/` + `docs/runbooks/` に集約（ルート維持は `NEXT.md` のみ）
+- `result/<stem>/` サブディレクトリ構造化（`hamer_api.hamer()` も変更）
+- `result/` を `/misc/dl00/gayagaya/hamer_results/` に逃がして symlink
+
+**サブモジュール化準備:**
+- `scripts/rebuild_env.sh`（12 ステップ、冪等、検証済）— 6 地雷（uv `--seed` / cu124 / `--no-build-isolation` / setuptools<70 / numpy<2 / tarball mv）を回避
+- `docs/SUBMODULE_SETUP.md` / `docs/REBUILD_SCRIPT_PLAN.md`
+
+#### 📦 Git 状態
+
+- ブランチ `personal` 最新 `5fc68e1`、`origin/personal` と一致
+- `main` は upstream `geopavlakos/hamer@3a01849` と一致
+- ワーキングツリー clean、`/tmp/` の hamer 関連ファイルゼロ
+
+#### 🚫 未着手（優先度低、将来課題）
+
+- 時系列スムージング（1€ filter / Savitzky-Golay）
+- 左右ラベルの temporal consistency（IoU トラッキング）
+- 逐次 yield / コールバック API（リアルタイム用途）
+- ROI フィルタ強化（スコア閾値、最大手数）
+- `return_in_memory` モード（ファイル書かず dict 返却）
+- MANO の左手 x-mirror 自動適用オプション
+- デバッグ可視化（特定フレームだけ画像出力）
+- 全動画への NMS 適用（次回 dual-output 再走時に自動）
+
 ---
 
 ## 直近のセッションでやったこと（2026-05-12）
