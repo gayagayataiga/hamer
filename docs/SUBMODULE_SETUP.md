@@ -32,7 +32,7 @@ git submodule で追加した時点では：
 - ❌ **`_DATA/data/mano/MANO_RIGHT.pkl` 無い**（`/_DATA/` が gitignored）
 - ❌ **`_DATA/hamer_ckpts/` のモデル重み無い**（同上）
 - ❌ **`third-party/ViTPose/` は空ディレクトリ**（入れ子 submodule、未初期化）
-- ❌ **`result/` シンボリックリンクは保存されるが、リンク先 `/misc/dl00/gayagaya/hamer_results` が新環境に無いと dead link**
+- ❌ **`result/` シンボリックリンクは保存されるが、リンク先 `../runs/hamer`（= `/misc/dl00/gayagaya/MimicAnno/runs/hamer`）が新環境に無いと dead link**
 
 → ソースだけ来て **依存物 + venv + 入れ子 submodule + データ** は手動再構築が必要。
 
@@ -105,13 +105,13 @@ ln -s /misc/dl00/gayagaya/ft-change/mano_v1_2/models/MANO_RIGHT.pkl _DATA/data/m
 
 ### 5. `result/` のリンク先処理（任意）
 
-submodule 内の `result` は元サーバー (`/misc/dl00/gayagaya/hamer_results`) を指したシンボリックリンク。新環境では：
+submodule 内の `result` は MimicAnno リポジトリ内の保存先 (`../runs/hamer` = `/misc/dl00/gayagaya/MimicAnno/runs/hamer`) を指したシンボリックリンク。新環境では：
 
 - **過去 result を見ない場合**: そのまま放置（dead link、害なし）または `rm result` で削除
 - **過去 result を使う場合**: シンボリックリンクを新環境の保存先に張り替え
   ```bash
   rm result
-  ln -s /your/new/path/hamer_results result
+  ln -s /your/new/path/hamer_results result   # 例: MimicAnno/runs/hamer など
   ```
 - **新規 result を作る場合**: 出力先を呼び出し時に `output_dir=...` で指定すれば `result/` を使わない
 

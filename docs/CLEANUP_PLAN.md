@@ -141,7 +141,7 @@ result/
 `result/` 7.3 GB がリポジトリ直下にあると `find` や `git status` でうるさい。
 
 選択肢:
-- **シンボリックリンク化**: `result/` を `/misc/dl00/gayagaya/hamer_results/` 等に移してリンクを張る → ストレージ的には変わらないが、リポジトリは軽くなる
+- **シンボリックリンク化**: `result/` を `/misc/dl00/gayagaya/MimicAnno/runs/hamer/` 等に移してリンクを張る → ストレージ的には変わらないが、リポジトリは軽くなる
 - **`.gitignore` に追加**: 既に追加されている？要確認
 
 `git status` でちらつくのを抑えるだけなら .gitignore で十分。物理的に動かすのは下流が読みに来てる経路次第。
@@ -485,14 +485,13 @@ ls *.md
 
 ### E.1 移動先決定
 
-候補:
-- `/misc/dl00/gayagaya/hamer_results/` （ストレージは同じ）
-- `/misc/dl00/gayagaya/data/hamer_results/`
+実施済み (2026-05-14): `/misc/dl00/gayagaya/MimicAnno/runs/hamer/` に移動。
+旧 `/misc/dl00/gayagaya/hamer_results/` は削除済み。
 
-### E.2 移動 + シンボリックリンク
+### E.2 移動 + シンボリックリンク（参考: 実施済み手順）
 
 ```bash
-DEST=/misc/dl00/gayagaya/hamer_results
+DEST=/misc/dl00/gayagaya/MimicAnno/runs/hamer
 mkdir -p "$(dirname $DEST)"
 mv result "$DEST"
 ln -s "$DEST" result

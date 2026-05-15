@@ -249,7 +249,7 @@ commit `831a897` で本体・ドキュメント追加。
 - 不要ファイル削除（tarball / `out_videos/` / `__pycache__/`）
 - markdown を `docs/` + `docs/runbooks/` に集約（ルート維持は `NEXT.md` のみ）
 - `result/<stem>/` サブディレクトリ構造化（`hamer_api.hamer()` も変更）
-- `result/` を `/misc/dl00/gayagaya/hamer_results/` に逃がして symlink
+- `result/` を `/misc/dl00/gayagaya/MimicAnno/runs/hamer/` に逃がして symlink (2026-05-14 実施済み)
 
 **サブモジュール化準備:**
 - `scripts/rebuild_env.sh`（12 ステップ、冪等、検証済）— 6 地雷（uv `--seed` / cu124 / `--no-build-isolation` / setuptools<70 / numpy<2 / tarball mv）を回避
