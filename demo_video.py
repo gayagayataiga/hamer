@@ -13,10 +13,24 @@ Optional:
 """
 from pathlib import Path
 import argparse
+import inspect
 import os
 import cv2
 import numpy as np
 import torch
+
+# chumpy (pulled in by smplx to unpickle MANO_RIGHT.pkl) targets pre-1.24
+# numpy and Python <3.11: it does `from numpy import bool, int, ...`
+# (aliases removed in numpy 1.24) and calls inspect.getargspec (removed in
+# Python 3.11). Restore both before chumpy is imported (via hamer -> smplx).
+if not hasattr(inspect, "getargspec"):
+    inspect.getargspec = inspect.getfullargspec
+for _np_alias, _np_target in (
+    ("bool", bool), ("int", int), ("float", float), ("complex", complex),
+    ("object", object), ("str", str), ("unicode", str),
+):
+    if not hasattr(np, _np_alias):
+        setattr(np, _np_alias, _np_target)
 
 from hamer.configs import CACHE_DIR_HAMER
 from hamer.models import HAMER, download_models, load_hamer, DEFAULT_CHECKPOINT
